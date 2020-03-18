@@ -1,0 +1,59 @@
+--pgsql lock 相關 sql
+--注意 製造lock 請開一個視窗,另一個update 會被lock要是另一個視窗 ,
+
+一.製作lock
+1.建立db
+CREATE TABLE public.db_user
+(
+    id character varying(50) COLLATE pg_catalog."default" NOT NULL,
+    age integer,
+    name character varying(100) COLLATE pg_catalog."default",
+    roleid character varying COLLATE pg_catalog."default",
+    CONSTRAINT db_user_pkey PRIMARY KEY (id)
+)
+2.寫入資料
+INSERT INTO public.db_user(
+	id, age, name, roleid)
+	VALUES (1,1,'test1',1),(2,1,'test2',2);
+
+3.用sql 來lock欄位
+begin;
+select * from db_user where  id='1' for update nowait;
+commit;  --請注意 請先不要執行commit 並且前面begin一定要執行 ,就會產生select lock 這個欄位,之後要恢復再使用commit即可
+
+4.測試lock sql
+    1.UPDATE db_user SET age = 1 RETURNING id
+
+5.篩選出lock 的row （避免在update 很多資料時 出現time out lock 錯誤
+Select id from db_user where id in('1','2') for update SKIP LOCKED
+
+6.多筆update 排出lock 範例
+UPDATE db_user SET age = 1 where id in(Select id from db_user where id in('1','2') for update SKIP LOCKED )   RETURNING id
+7.設定lock time out 時間,避免會一直再run的狀態
+set lock_timeout=1000; --1000等於1秒
+
+8.查詢目前db lock全部狀態 （通用）
+select a.pid, a.application_name,
+ a.wait_event, a.wait_event_type, a.state,
+ l.locktype, l.relation::regclass,
+ l.mode, l.granted
+from pg_stat_activity a,
+ pg_locks l
+where a.backend_type = 'client backend'
+  and a.wait_event is not null
+  and l.locktype='relation'
+  and a.pid=l.pid ;
+9.組合比較清楚的sql 可以看出 目前是誰在暫用lock 和指令,還有目前誰因為lock被擋住
+SELECT
+  COALESCE(blockingl.relation::regclass::text,blockingl.locktype) as locked_item,
+  blockeda.pid AS blocked_pid, blockeda.query as blocked_query,
+  blockedl.mode as blocked_mode, blockinga.pid AS blocking_pid,
+  blockinga.query as blocking_query, blockingl.mode as blocking_mode
+FROM pg_catalog.pg_locks blockedl
+JOIN pg_stat_activity blockeda ON blockedl.pid = blockeda.pid
+JOIN pg_catalog.pg_locks blockingl ON(
+  ( (blockingl.transactionid=blockedl.transactionid) OR
+    (blockingl.relation=blockedl.relation AND blockingl.locktype=blockedl.locktype)
+  ) AND blockedl.pid != blockingl.pid)
+JOIN pg_stat_activity blockinga ON blockingl.pid = blockinga.pid
+WHERE NOT blockedl.granted;

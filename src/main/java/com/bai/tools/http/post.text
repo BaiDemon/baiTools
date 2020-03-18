@@ -1,0 +1,2 @@
+post json
+curl -d '{"password":"Aa123456","account":"test0026"}' -H "Content-Type: application/json" -X POST http://172.16.2.244:9491/phone/v1/login
